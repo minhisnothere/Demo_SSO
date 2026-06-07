@@ -1,0 +1,87 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sso_sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "YourStrong!Passw0rd"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong!Passw0rd' -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  auth-server:
+    build: ./auth-server
+    container_name: sso_auth_server
+    environment:
+      PORT: 4000
+      JWT_SECRET: "${JWT_SECRET:-sso_demo_secret_change_in_real_project}"
+      SESSION_SECRET: "${SESSION_SECRET:-auth_server_session_secret}"
+      DB_SERVER: sqlserver
+      DB_PORT: 1433
+      DB_USER: sa
+      DB_PASSWORD: "YourStrong!Passw0rd"
+      DB_NAME: SsoDemoDb
+      DB_ENCRYPT: "false"
+      DB_TRUST_SERVER_CERTIFICATE: "true"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+      GOOGLE_REDIRECT_URI: "${GOOGLE_REDIRECT_URI:-http://localhost:4000/auth/google/callback}"
+      GOOGLE_AUTH_URI: "${GOOGLE_AUTH_URI:-https://accounts.google.com/o/oauth2/v2/auth}"
+      GOOGLE_TOKEN_URI: "${GOOGLE_TOKEN_URI:-https://oauth2.googleapis.com/token}"
+      CLIENT_CALLBACK_URL: "http://localhost:3000/auth/sso/callback"
+    ports:
+      - "4000:4000"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+
+  timetable-service:
+    build: ./timetable-service
+    container_name: sso_timetable_service
+    environment:
+      PORT: 5000
+      AUTH_SERVER_INTERNAL: "http://auth-server:4000"
+    ports:
+      - "5000:5000"
+    depends_on:
+      - auth-server
+
+  course-service:
+    build: ./course-service
+    container_name: sso_course_service
+    environment:
+      PORT: 6000
+      AUTH_SERVER_INTERNAL: "http://auth-server:4000"
+    ports:
+      - "6000:6000"
+    depends_on:
+      - auth-server
+
+  client-app:
+    build: ./client-app
+    container_name: sso_client_app
+    environment:
+      PORT: 3000
+      SESSION_SECRET: "client_app_session_secret"
+      AUTH_SERVER_INTERNAL: "http://auth-server:4000"
+      AUTH_SERVER_PUBLIC: "http://localhost:4000"
+      TIMETABLE_SERVICE_INTERNAL: "http://timetable-service:5000"
+      COURSE_SERVICE_INTERNAL: "http://course-service:6000"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - auth-server
+      - timetable-service
+      - course-service
+
+volumes:
+  sqlserver_data:
